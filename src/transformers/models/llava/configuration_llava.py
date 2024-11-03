@@ -73,8 +73,8 @@ class LlavaConfig(PretrainedConfig):
     ```"""
 
     model_type = "llava"
-    is_composition = False
     keys_to_ignore_at_inference = ["past_key_values"]
+    is_composition = True
 
     def __init__(
         self,
