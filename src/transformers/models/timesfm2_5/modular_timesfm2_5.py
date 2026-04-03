@@ -532,7 +532,7 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor] | torch.Tensor,
+        past_values: Sequence[torch.Tensor],
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,
         forecast_context_len: int | None = None,
@@ -557,25 +557,14 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         """
         forecast_context_len = forecast_context_len or self.context_len
 
-        if isinstance(past_values, torch.Tensor):
-            if past_values.ndim != 2:
-                raise ValueError("Tensor `past_values` must be rank-2 with shape [batch_size, time_steps].")
-            if window_size is not None:
-                raise ValueError(
-                    "`window_size` is not supported for batched tensor `past_values`; pass a list of 1D series."
-                )
-            device = past_values.device
-            inputs = past_values[:, -forecast_context_len:]
-            input_min = inputs.min()
-        else:
-            device = past_values[0].device
-            inputs = [ts[-forecast_context_len:] for ts in past_values]
-            input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
-            if window_size is not None:
-                new_inputs: list[torch.Tensor] = []
-                for ts in inputs:
-                    new_inputs.extend(self._timesfm_moving_average(ts, window_size))
-                inputs = new_inputs
+        device = past_values[0].device
+        inputs = [ts[-forecast_context_len:] for ts in past_values]
+        input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
+        if window_size is not None:
+            new_inputs: list[torch.Tensor] = []
+            for ts in inputs:
+                new_inputs.extend(self._timesfm_moving_average(ts, window_size))
+            inputs = new_inputs
 
         if truncate_negative is None:
             truncate_negative = self.config.infer_is_positive

@@ -700,22 +700,28 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
         input_ts, input_padding = [], []
 
         for ts in inputs:
-            input_len = ts.shape[0]
-            padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
-            if input_len < context_len:
-                num_front_pad = context_len - input_len
-                ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
-                padding = torch.cat([torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0)
-            elif input_len > context_len:
-                ts = ts[-context_len:]
-                padding = padding[-(context_len + self.horizon_len) :]
+            # Truncate to context_len from the end
+            ts = ts[-context_len:]
+            # Calculate front padding needed to reach context_len
+            num_front_pad = context_len - ts.shape[0]
+            # Pad ts and create padding mask
+            ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
+            padding = torch.cat(
+                [
+                    torch.ones(num_front_pad, dtype=ts.dtype, device=ts.device),
+                    torch.zeros(context_len + self.horizon_len - num_front_pad, dtype=ts.dtype, device=ts.device),
+                ],
+                dim=0,
+            )
 
             input_ts.append(ts)
             input_padding.append(padding)
 
         result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
-            result = result + (torch.tensor(freq[: len(inputs)], dtype=torch.int32).reshape(-1, 1),)
+            result = result + (
+                torch.as_tensor(freq[: len(inputs)], dtype=torch.int32, device=result[0].device).reshape(-1, 1),
+            )
         return result
 
     def _postprocess_output(
@@ -745,7 +751,7 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor] | torch.Tensor,
+        past_values: Sequence[torch.Tensor],
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,
         forecast_context_len: int | None = None,
@@ -770,25 +776,14 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
         """
         forecast_context_len = forecast_context_len or self.context_len
 
-        if isinstance(past_values, torch.Tensor):
-            if past_values.ndim != 2:
-                raise ValueError("Tensor `past_values` must be rank-2 with shape [batch_size, time_steps].")
-            if window_size is not None:
-                raise ValueError(
-                    "`window_size` is not supported for batched tensor `past_values`; pass a list of 1D series."
-                )
-            device = past_values.device
-            inputs = past_values[:, -forecast_context_len:]
-            input_min = inputs.min()
-        else:
-            device = past_values[0].device
-            inputs = [ts[-forecast_context_len:] for ts in past_values]
-            input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
-            if window_size is not None:
-                new_inputs: list[torch.Tensor] = []
-                for ts in inputs:
-                    new_inputs.extend(self._timesfm_moving_average(ts, window_size))
-                inputs = new_inputs
+        device = past_values[0].device
+        inputs = [ts[-forecast_context_len:] for ts in past_values]
+        input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
+        if window_size is not None:
+            new_inputs: list[torch.Tensor] = []
+            for ts in inputs:
+                new_inputs.extend(self._timesfm_moving_average(ts, window_size))
+            inputs = new_inputs
 
         if truncate_negative is None:
             truncate_negative = self.config.infer_is_positive
