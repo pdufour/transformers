@@ -74,7 +74,7 @@ def sdpa_attention_forward(
     #   full graph options. Otherwise, dynamic shapes are prevented from compiling.
     # - It is important to check first for the shape, otherwise compile will fail with
     #   `argument 'is_causal' must be bool, not SymBool`.
-    is_causal = query.shape[2] > 1 and attention_mask is None and is_causal
+    is_causal = attention_mask is None and is_causal
 
     # Shapes (e.g. query.shape[2]) are tensors during jit tracing, resulting in `is_causal` being a tensor.
     # We convert it to a bool for the SDPA kernel that only accepts bools.

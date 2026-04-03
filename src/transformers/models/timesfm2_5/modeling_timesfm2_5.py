@@ -39,6 +39,7 @@ from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple
 from ...utils.generic import maybe_autocast, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
+from ..timesfm.modeling_timesfm import TimesFmModelForPrediction
 from .configuration_timesfm2_5 import TimesFm2_5Config
 
 
@@ -588,8 +589,8 @@ class TimesFm2_5Model(TimesFm2_5PreTrainedModel):
         if past_values_padding is None:
             past_values_padding = torch.zeros_like(past_values, dtype=torch.long)
 
-        patched_inputs = past_values.view(batch_size, -1, patch_len)
-        patched_masks = past_values_padding[:, :seq_len].view(batch_size, -1, patch_len)
+        patched_inputs = past_values.reshape(batch_size, -1, patch_len)
+        patched_masks = past_values_padding[:, :seq_len].reshape(batch_size, -1, patch_len)
         patched_masks_bool = patched_masks >= 0.5
 
         count = past_values.new_zeros(batch_size)
@@ -641,8 +642,9 @@ class TimesFm2_5Model(TimesFm2_5PreTrainedModel):
                 **kwargs,
             )
 
-        loc = context_mu[:, -1]
-        scale = torch.clamp(context_sigma[:, -1], min=self.tolerance)
+        idx = torch.arange(context_mu.size(1), device=context_mu.device)[-1:]
+        loc = context_mu.index_select(1, idx).squeeze(1)
+        scale = torch.clamp(context_sigma.index_select(1, idx).squeeze(1), min=self.tolerance)
 
         return TimesFm2_5Output(
             last_hidden_state=hidden_states,
@@ -684,34 +686,27 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
     def _preprocess(
         self, inputs: Sequence[torch.Tensor], freq: Sequence[int] | None = None, context_len: int | None = None
     ) -> tuple[torch.Tensor, ...]:
-        """Pad/truncate input time series to `context_len` and build a padding mask.
-
-        Args:
-            inputs: A list of 1d Tensors. Each Tensor is the context time series of a single forecast task.
-            freq: Optional list of frequencies (returned as a tensor when provided).
-            context_len: Optional context length override (defaults to `self.context_len`).
-
-        Returns:
-            Tuple of (padded_inputs, padding_mask) and optionally a freq tensor.
-        """
+        """Pad/truncate input time series to `context_len` and build a padding mask."""
         if context_len is None:
             context_len = self.context_len
 
         input_ts, input_padding = [], []
 
         for ts in inputs:
-            input_len = ts.shape[0]
-            padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
-            if input_len < context_len:
-                num_front_pad = context_len - input_len
-                ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
-                padding = torch.cat([torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0)
-            elif input_len > context_len:
-                ts = ts[-context_len:]
-                padding = padding[-(context_len + self.horizon_len) :]
+            ts_truncated = ts[-context_len:]
+            input_len = ts_truncated.shape[0]
+            pad_len = context_len - input_len
+            ts_padded = F.pad(ts_truncated, (pad_len, 0), value=0.0)
+            mask_padded = torch.cat(
+                [
+                    torch.ones(pad_len, dtype=ts.dtype, device=ts.device),
+                    torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device),
+                ],
+                dim=0,
+            )
 
-            input_ts.append(ts)
-            input_padding.append(padding)
+            input_ts.append(ts_padded)
+            input_padding.append(mask_padded)
 
         result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
@@ -771,13 +766,13 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
         forecast_context_len = forecast_context_len or self.context_len
         device = past_values[0].device
 
-        inputs = [ts[-forecast_context_len:] for ts in past_values]
+        inputs = past_values
         input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
 
         if window_size is not None:
             new_inputs: list[torch.Tensor] = []
             for ts in inputs:
-                new_inputs.extend(self._timesfm_moving_average(ts, window_size))
+                new_inputs.extend(TimesFmModelForPrediction._timesfm_moving_average(ts, window_size))
             inputs = new_inputs
 
         if truncate_negative is None:
@@ -863,17 +858,6 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
             loss=loss,
         )
 
-    @staticmethod
-    def _timesfm2_5_moving_average(arr: torch.Tensor, window_size: int) -> list[torch.Tensor]:
-        """Calculates the moving average using PyTorch's convolution function."""
-        # Pad with zeros to handle initial window positions
-        arr_padded = F.pad(arr, (window_size - 1, 0), "constant", 0)
-        # Create a convolution kernel
-        kernel = torch.ones(window_size, dtype=arr.dtype, device=arr.device) / window_size
-        # Apply convolution to calculate the moving average
-        smoothed_arr = F.conv1d(arr_padded.view(1, 1, -1), kernel.view(1, 1, -1)).squeeze()
-        return [smoothed_arr, arr - smoothed_arr]
-
     def _decode_and_project(
         self,
         normalized_ts: torch.Tensor,
@@ -905,12 +889,11 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
         batch_size, num_patches = point_output.shape[:2]
         num_quantiles = len(self.config.quantiles) + 1
 
-        point_forecast = point_output.view(batch_size, num_patches, self.config.horizon_length, num_quantiles)[
-            :, -1, :, :
-        ]
-        quantile_spreads = quantile_output.view(
-            batch_size, num_patches, self.config.output_quantile_len, num_quantiles
-        )[:, -1, :, :]
+        p_out = point_output.view(batch_size, -1, self.config.horizon_length, num_quantiles)
+        q_out = quantile_output.view(batch_size, -1, self.config.output_quantile_len, num_quantiles)
+        idx = torch.arange(p_out.size(1), device=p_out.device)[-1:]
+        point_forecast = p_out.index_select(1, idx).squeeze(1)
+        quantile_spreads = q_out.index_select(1, idx).squeeze(1)
 
         # Ensure both outputs are on the same device for model parallelism
         quantile_spreads = quantile_spreads.to(point_forecast.device)

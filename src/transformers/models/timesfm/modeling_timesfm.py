@@ -608,18 +608,20 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         input_ts, input_padding = [], []
 
         for ts in inputs:
-            input_len = ts.shape[0]
-            padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
-            if input_len < context_len:
-                num_front_pad = context_len - input_len
-                ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
-                padding = torch.cat([torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0)
-            elif input_len > context_len:
-                ts = ts[-context_len:]
-                padding = padding[-(context_len + self.horizon_len) :]
+            ts_truncated = ts[-context_len:]
+            input_len = ts_truncated.shape[0]
+            pad_len = context_len - input_len
+            ts_padded = F.pad(ts_truncated, (pad_len, 0), value=0.0)
+            mask_padded = torch.cat(
+                [
+                    torch.ones(pad_len, dtype=ts.dtype, device=ts.device),
+                    torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device),
+                ],
+                dim=0,
+            )
 
-            input_ts.append(ts)
-            input_padding.append(padding)
+            input_ts.append(ts_padded)
+            input_padding.append(mask_padded)
 
         result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
