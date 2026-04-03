@@ -274,6 +274,77 @@ class TimesFm2_5ModelTest(ModelTesterMixin, unittest.TestCase):
         if self.has_attentions and outputs.attentions is not None:
             self.assertIsNotNone(attentions.grad)
 
+    def test_preprocess_padding(self):
+        config = self.model_tester.get_config()
+        model = TimesFm2_5ModelForPrediction(config).to(torch_device)
+        model.eval()
+
+        context_len = config.context_length
+        horizon_len = config.horizon_length
+
+        # 1. Input exactly context_length
+        input_len = context_len
+        ts = torch.randn(input_len, device=torch_device)
+        input_ts, input_padding = model._preprocess([ts])
+
+        self.assertEqual(input_ts.shape, (1, context_len))
+        self.assertEqual(input_padding.shape, (1, context_len + horizon_len))
+        self.assertTrue(torch.all(input_padding == 0))
+        self.assertTrue(torch.all(input_ts[0] == ts))
+
+        # 2. Input shorter than context_length (requires padding)
+        input_len = context_len // 2
+        ts = torch.randn(input_len, device=torch_device)
+        input_ts, input_padding = model._preprocess([ts])
+
+        num_front_pad = context_len - input_len
+        self.assertEqual(input_ts.shape, (1, context_len))
+        self.assertEqual(input_padding.shape, (1, context_len + horizon_len))
+
+        # Check padding in input_ts
+        self.assertTrue(torch.all(input_ts[0, :num_front_pad] == 0))
+        self.assertTrue(torch.all(input_ts[0, num_front_pad:] == ts))
+
+        # Check padding in input_padding mask (1 for padded, 0 for valid)
+        self.assertTrue(torch.all(input_padding[0, :num_front_pad] == 1))
+        self.assertTrue(torch.all(input_padding[0, num_front_pad:] == 0))
+
+        # 3. Input longer than context_length (requires truncation)
+        input_len = context_len * 2
+        ts = torch.randn(input_len, device=torch_device)
+        input_ts, input_padding = model._preprocess([ts])
+
+        self.assertEqual(input_ts.shape, (1, context_len))
+        self.assertEqual(input_padding.shape, (1, context_len + horizon_len))
+
+        # Should be truncated to the last context_len elements
+        self.assertTrue(torch.all(input_ts[0] == ts[-context_len:]))
+        self.assertTrue(torch.all(input_padding == 0))
+
+    def test_preprocess_multiple_inputs(self):
+        config = self.model_tester.get_config()
+        model = TimesFm2_5ModelForPrediction(config).to(torch_device)
+        model.eval()
+
+        context_len = config.context_length
+        horizon_len = config.horizon_length
+
+        inputs = [
+            torch.randn(context_len, device=torch_device),
+            torch.randn(context_len // 2, device=torch_device),
+            torch.randn(context_len * 2, device=torch_device),
+        ]
+
+        input_ts, input_padding = model._preprocess(inputs)
+
+        self.assertEqual(input_ts.shape, (3, context_len))
+        self.assertEqual(input_padding.shape, (3, context_len + horizon_len))
+
+        # Check second input (padded)
+        num_front_pad = context_len - (context_len // 2)
+        self.assertTrue(torch.all(input_padding[1, :num_front_pad] == 1))
+        self.assertTrue(torch.all(input_padding[1, num_front_pad:] == 0))
+
     def _prepare_for_class(self, inputs_dict, model_class, return_labels=False):
         inputs_dict = super()._prepare_for_class(inputs_dict, model_class, return_labels=return_labels)
         if return_labels:
