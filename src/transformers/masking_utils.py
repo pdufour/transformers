@@ -489,7 +489,7 @@ def sdpa_mask(
             "`cache_position` is deprecated as an arg, and will be removed in Transformers v5.6. Please use `q_length` and "
             "`q_offset` instead, similarly to `kv_length` and `kv_offset`"
         )
-        q_length, q_offset = (q_length.shape[0], q_length[0].to(device)) if len(q_length.shape) > 0 else (1, q_length.to(device))
+        q_length, q_offset = q_length.shape[0], q_length[0].to(device)
 
     # Potentially pad the 2D mask
     padding_mask = prepare_padding_mask(attention_mask, kv_length, kv_offset)
