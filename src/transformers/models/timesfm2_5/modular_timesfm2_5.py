@@ -494,7 +494,7 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         """Run the decoder and project to point/quantile outputs.
 
         Returns:
-            Tuple of (point_forecast, quantile_spreads, model_outputs).
+            Tuple of (point_forecast, quantile_spreads), each of shape `(batch, length, num_quantiles)`.
         """
         model_outputs = self.model(
             past_values=normalized_ts,
@@ -541,9 +541,8 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         **kwargs: Unpack[TransformersKwargs],
     ) -> TimesFm2_5OutputForPrediction:
         r"""
-        past_values (`Sequence[torch.Tensor]` or `torch.Tensor` of shape `(batch_size, time_steps)`):
-            Either one 1D tensor per series, or a single batched 2D tensor (e.g. for ONNX export). When using a
-            tensor, `window_size` must be `None` (use a list of series for trend/residual decomposition).
+        past_values (`Sequence[torch.Tensor]`):
+            Past values of the time series that serves as input to the model. Each tensor is a 1D time series.
         window_size (`int`, *optional*):
             Window size of trend + residual decomposition. If `None`, decomposition is not applied.
         future_values (`torch.Tensor`, *optional*):

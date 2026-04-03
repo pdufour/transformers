@@ -555,7 +555,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         """Pad/truncate input time series to `context_len` and build a padding mask.
 
         Args:
-            inputs: A list of 1d Tensors or a single 2d Tensor [batch, time].
+            inputs: A list of 1d Tensors. Each Tensor is the context time series of a single forecast task.
             freq: Optional list of frequencies (returned as a tensor when provided).
             context_len: Optional context length override (defaults to `self.context_len`).
 
@@ -703,7 +703,6 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         input_ts = input_ts.to(device)
         input_padding = input_padding.to(device)
         inp_freq = inp_freq.to(device)
-
 
         final_out = input_ts
         context_len = final_out.shape[1]
