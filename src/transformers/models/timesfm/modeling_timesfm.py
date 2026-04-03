@@ -590,10 +590,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         self.post_init()
 
     def _preprocess(
-        self,
-        inputs: Sequence[torch.Tensor] | torch.Tensor,
-        freq: Sequence[int] | None = None,
-        context_len: int | None = None,
+        self, inputs: Sequence[torch.Tensor], freq: Sequence[int] | None = None, context_len: int | None = None
     ) -> tuple[torch.Tensor, ...]:
         """Pad/truncate input time series to `context_len` and build a padding mask.
 
@@ -608,43 +605,25 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         if context_len is None:
             context_len = self.context_len
 
-        if isinstance(inputs, torch.Tensor):
-            ts_truncated = inputs[:, -context_len:]
-            trunc_len = ts_truncated.shape[1]
-            pad_len = context_len - trunc_len
-            input_ts = F.pad(ts_truncated, (pad_len, 0))
-            input_padding = torch.cat(
-                [
-                    torch.ones(inputs.shape[0], pad_len, dtype=inputs.dtype, device=inputs.device),
-                    torch.zeros(
-                        inputs.shape[0], trunc_len + self.horizon_len, dtype=inputs.dtype, device=inputs.device
-                    ),
-                ],
-                dim=1,
-            )
-            result = (input_ts, input_padding)
-        else:
-            input_ts, input_padding = [], []
-            for ts in inputs:
-                input_len = ts.shape[0]
-                padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
-                if input_len < context_len:
-                    num_front_pad = context_len - input_len
-                    ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
-                    padding = torch.cat(
-                        [torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0
-                    )
-                elif input_len > context_len:
-                    ts = ts[-context_len:]
-                    padding = padding[-(context_len + self.horizon_len) :]
+        input_ts, input_padding = [], []
 
-                input_ts.append(ts)
-                input_padding.append(padding)
-            result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
+        for ts in inputs:
+            input_len = ts.shape[0]
+            padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
+            if input_len < context_len:
+                num_front_pad = context_len - input_len
+                ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
+                padding = torch.cat([torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0)
+            elif input_len > context_len:
+                ts = ts[-context_len:]
+                padding = padding[-(context_len + self.horizon_len) :]
 
+            input_ts.append(ts)
+            input_padding.append(padding)
+
+        result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
-            freq = torch.as_tensor(freq, dtype=torch.int32, device=result[0].device)
-            result = result + (freq[: result[0].shape[0]].reshape(-1, 1),)
+            result = result + (torch.tensor(freq[: len(inputs)], dtype=torch.int32).reshape(-1, 1),)
         return result
 
     def _postprocess_output(
@@ -674,7 +653,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor] | torch.Tensor,
+        past_values: Sequence[torch.Tensor],
         freq: Sequence[torch.Tensor | int] | None = None,
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,
