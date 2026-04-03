@@ -490,7 +490,7 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         normalized_ts: torch.Tensor,
         input_padding: torch.Tensor,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.Tensor, torch.Tensor, TimesFm2_5Output]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Run the decoder and project to point/quantile outputs.
 
         Returns:
