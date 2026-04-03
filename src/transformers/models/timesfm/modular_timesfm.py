@@ -565,11 +565,8 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         input_ts, input_padding = [], []
 
         for ts in inputs:
-            # Truncate to context_len from the end
             ts = ts[-context_len:]
-            # Calculate front padding needed to reach context_len
             num_front_pad = context_len - ts.shape[0]
-            # Pad ts and create padding mask
             ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
             padding = torch.cat(
                 [
@@ -578,7 +575,6 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
                 ],
                 dim=0,
             )
-
             input_ts.append(ts)
             input_padding.append(padding)
 

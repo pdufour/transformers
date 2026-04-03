@@ -700,11 +700,8 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
         input_ts, input_padding = [], []
 
         for ts in inputs:
-            # Truncate to context_len from the end
             ts = ts[-context_len:]
-            # Calculate front padding needed to reach context_len
             num_front_pad = context_len - ts.shape[0]
-            # Pad ts and create padding mask
             ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
             padding = torch.cat(
                 [
@@ -713,7 +710,6 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
                 ],
                 dim=0,
             )
-
             input_ts.append(ts)
             input_padding.append(padding)
 
@@ -775,10 +771,11 @@ class TimesFm2_5ModelForPrediction(TimesFm2_5PreTrainedModel):
             `config.force_flip_invariance`.
         """
         forecast_context_len = forecast_context_len or self.context_len
-
         device = past_values[0].device
+
         inputs = [ts[-forecast_context_len:] for ts in past_values]
         input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
+
         if window_size is not None:
             new_inputs: list[torch.Tensor] = []
             for ts in inputs:
