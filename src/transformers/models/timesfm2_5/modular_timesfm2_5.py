@@ -556,10 +556,11 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
             `config.force_flip_invariance`.
         """
         forecast_context_len = forecast_context_len or self.context_len
-
         device = past_values[0].device
+
         inputs = [ts[-forecast_context_len:] for ts in past_values]
         input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
+
         if window_size is not None:
             new_inputs: list[torch.Tensor] = []
             for ts in inputs:
