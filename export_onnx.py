@@ -8,14 +8,15 @@ from transformers.models.timesfm2_5.modeling_timesfm2_5 import TimesFm2_5ModelFo
 
 
 class TimesFmOnnxWrapper(nn.Module):
-    """Batched `[batch, time]` input for ONNX; kwargs defer to ``TimesFm2_5ModelForPrediction.forward`` defaults."""
+    """ONNX sees `[batch, time]`; each row is turned into a 1D series for ``forward``."""
 
     def __init__(self, model: TimesFm2_5ModelForPrediction) -> None:
         super().__init__()
         self.model = model
 
     def forward(self, past_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        out = self.model(past_values)
+        series = list(past_values.unbind(0))
+        out = self.model(series)
         return out.mean_predictions, out.full_predictions
 
 
