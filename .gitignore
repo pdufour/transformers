@@ -184,3 +184,7 @@ test-results/
 # AI agent local setup artifacts
 /.agents/skills
 /.claude/skills
+
+# Local ONNX exports (track only Hugging Face-style config)
+onnx/*
+!onnx/config.json
