@@ -32,23 +32,22 @@ def export():
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
 
+    # Use batch size 2 for the example to see if it generalizes
     batch_size = 2
-    context_len = 1024
+    context_len = 512
     past_values = torch.randn(batch_size, context_len)
 
     os.makedirs("onnx", exist_ok=True)
     onnx_path = "onnx/model.onnx"
 
-    batch_dim = Dim("batch_size")
-    seq_dim = Dim("sequence_length")
-    dynamic_shapes = {"past_values": {0: batch_dim, 1: seq_dim}}
+    # Define dynamic shapes for Dynamo
+    batch = Dim("batch", min=1, max=1024)
+    sequence = Dim("sequence", min=1, max=16384)
+    dynamic_shapes = {"past_values": {0: batch, 1: sequence}}
 
-    onnx_opset = 21
+    onnx_opset = 21  # Latest ONNX opset for maximum feature support
 
-    fast_export = os.environ.get("ONNX_EXPORT_OPTIMIZE", "").lower() not in ("1", "true", "yes")
-    print(
-        f"Dynamo ONNX export (opset {onnx_opset}, optimize={'ON' if not fast_export else 'OFF'}) -> {onnx_path} ..."
-    )
+    print(f"Dynamo ONNX export (opset {onnx_opset}) -> {onnx_path} ...")
 
     torch.onnx.export(
         wrapped,
@@ -59,9 +58,9 @@ def export():
         opset_version=onnx_opset,
         dynamo=True,
         dynamic_shapes=dynamic_shapes,
-        external_data=False,
+        external_data=True,
         do_constant_folding=True,
-        optimize=not fast_export,
+        optimize=False,
     )
     print("Export complete!")
 

@@ -608,28 +608,40 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         if context_len is None:
             context_len = self.context_len
 
-        input_ts, input_padding = [], []
-
-        for ts in inputs:
-            # Truncate if longer than context_len
-            ts_truncated = ts[-context_len:]
-            input_len = ts_truncated.shape[0]
-            pad_len = context_len - input_len
-            # F.pad is ONNX-friendly and avoids data-dependent guards
-            ts_padded = F.pad(ts_truncated, (pad_len, 0), value=0.0)
-            # Padding is at the front; horizon_len zeros denote valid (non-padded) horizon slots
-            mask_padded = torch.cat(
+        if isinstance(inputs, torch.Tensor):
+            ts_truncated = inputs[:, -context_len:]
+            trunc_len = ts_truncated.shape[1]
+            pad_len = context_len - trunc_len
+            input_ts = F.pad(ts_truncated, (pad_len, 0))
+            input_padding = torch.cat(
                 [
-                    torch.ones(pad_len, dtype=ts.dtype, device=ts.device),
-                    torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device),
+                    torch.ones(inputs.shape[0], pad_len, dtype=inputs.dtype, device=inputs.device),
+                    torch.zeros(
+                        inputs.shape[0], trunc_len + self.horizon_len, dtype=inputs.dtype, device=inputs.device
+                    ),
                 ],
-                dim=0,
+                dim=1,
             )
+            result = (input_ts, input_padding)
+        else:
+            input_ts, input_padding = [], []
+            for ts in inputs:
+                input_len = ts.shape[0]
+                padding = torch.zeros(input_len + self.horizon_len, dtype=ts.dtype, device=ts.device)
+                if input_len < context_len:
+                    num_front_pad = context_len - input_len
+                    ts = torch.cat([torch.zeros(num_front_pad, dtype=ts.dtype, device=ts.device), ts], dim=0)
+                    padding = torch.cat(
+                        [torch.ones(num_front_pad, dtype=ts.dtype, device=padding.device), padding], dim=0
+                    )
+                elif input_len > context_len:
+                    ts = ts[-context_len:]
+                    padding = padding[-(context_len + self.horizon_len) :]
 
-            input_ts.append(ts_padded)
-            input_padding.append(mask_padded)
+                input_ts.append(ts)
+                input_padding.append(padding)
+            result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
 
-        result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
             freq = torch.as_tensor(freq, dtype=torch.int32, device=result[0].device)
             result = result + (freq[: result[0].shape[0]].reshape(-1, 1),)
