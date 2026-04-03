@@ -8,14 +8,14 @@ from transformers.models.timesfm2_5.modeling_timesfm2_5 import TimesFm2_5ModelFo
 
 
 class TimesFmOnnxWrapper(nn.Module):
-    """Single-tensor export entrypoint; all kwargs defer to ``TimesFm2_5ModelForPrediction.forward`` defaults."""
+    """Batched `[batch, time]` input for ONNX; kwargs defer to ``TimesFm2_5ModelForPrediction.forward`` defaults."""
 
     def __init__(self, model: TimesFm2_5ModelForPrediction) -> None:
         super().__init__()
         self.model = model
 
     def forward(self, past_values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        out = self.model([past_values])
+        out = self.model(past_values)
         return out.mean_predictions, out.full_predictions
 
 
@@ -32,14 +32,16 @@ def export():
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
 
+    batch_size = 2
     context_len = 1024
-    past_values = torch.randn(context_len)
+    past_values = torch.randn(batch_size, context_len)
 
     os.makedirs("onnx", exist_ok=True)
     onnx_path = "onnx/model.onnx"
 
+    batch_dim = Dim("batch_size")
     seq_dim = Dim("sequence_length")
-    dynamic_shapes = {"past_values": {0: seq_dim}}
+    dynamic_shapes = {"past_values": {0: batch_dim, 1: seq_dim}}
 
     onnx_opset = 21
 

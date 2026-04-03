@@ -485,6 +485,20 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
 
         self.post_init()
 
+    def _preprocess_stacked(self, trunc: torch.Tensor, context_len: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pad/truncate like `_preprocess`, for rectangular `[batch_size, time]`. Used for export and batched APIs."""
+        batch_size, input_len = trunc.shape
+        pad_len = context_len - input_len
+        ts_padded = F.pad(trunc, (pad_len, 0), value=0.0)
+        input_padding = torch.cat(
+            [
+                torch.ones(batch_size, pad_len, dtype=trunc.dtype, device=trunc.device),
+                torch.zeros(batch_size, input_len + self.horizon_len, dtype=trunc.dtype, device=trunc.device),
+            ],
+            dim=1,
+        )
+        return ts_padded, input_padding
+
     def _decode_and_project(
         self,
         normalized_ts: torch.Tensor,
@@ -532,7 +546,7 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor],
+        past_values: Sequence[torch.Tensor] | torch.Tensor,
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,
         forecast_context_len: int | None = None,
@@ -541,8 +555,9 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         **kwargs: Unpack[TransformersKwargs],
     ) -> TimesFm2_5OutputForPrediction:
         r"""
-        past_values (`Sequence[torch.Tensor]`):
-            Past values of the time series that serves as input to the model. Each tensor is a 1D time series.
+        past_values (`Sequence[torch.Tensor]` or `torch.Tensor` of shape `(batch_size, time_steps)`):
+            Either one 1D tensor per series, or a single batched 2D tensor (e.g. for ONNX export). When using a
+            tensor, `window_size` must be `None` (use a list of series for trend/residual decomposition).
         window_size (`int`, *optional*):
             Window size of trend + residual decomposition. If `None`, decomposition is not applied.
         future_values (`torch.Tensor`, *optional*):
@@ -556,23 +571,36 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
             `config.force_flip_invariance`.
         """
         forecast_context_len = forecast_context_len or self.context_len
-        device = past_values[0].device
 
-        inputs = [ts[-forecast_context_len:] for ts in past_values]
-        input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
-
-        if window_size is not None:
-            new_inputs: list[torch.Tensor] = []
-            for ts in inputs:
-                new_inputs.extend(self._timesfm_moving_average(ts, window_size))
-            inputs = new_inputs
+        if isinstance(past_values, torch.Tensor):
+            if past_values.ndim != 2:
+                raise ValueError("Tensor `past_values` must be rank-2 with shape [batch_size, time_steps].")
+            if window_size is not None:
+                raise ValueError(
+                    "`window_size` is not supported for batched tensor `past_values`; pass a list of 1D series."
+                )
+            device = past_values.device
+            inputs = past_values[:, -forecast_context_len:]
+            input_min = inputs.min()
+        else:
+            device = past_values[0].device
+            inputs = [ts[-forecast_context_len:] for ts in past_values]
+            input_min = torch.min(torch.stack([torch.min(ts) for ts in inputs]))
+            if window_size is not None:
+                new_inputs: list[torch.Tensor] = []
+                for ts in inputs:
+                    new_inputs.extend(self._timesfm_moving_average(ts, window_size))
+                inputs = new_inputs
 
         if truncate_negative is None:
             truncate_negative = self.config.infer_is_positive
         if force_flip_invariance is None:
             force_flip_invariance = self.config.force_flip_invariance
 
-        input_ts, input_padding = self._preprocess(inputs, context_len=forecast_context_len)
+        if isinstance(inputs, torch.Tensor):
+            input_ts, input_padding = self._preprocess_stacked(inputs, forecast_context_len)
+        else:
+            input_ts, input_padding = self._preprocess(inputs, context_len=forecast_context_len)
         input_ts = input_ts.to(device)
         input_padding = input_padding.to(device)
 
