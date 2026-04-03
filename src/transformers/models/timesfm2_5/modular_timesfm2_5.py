@@ -485,20 +485,6 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
 
         self.post_init()
 
-    def _preprocess_stacked(self, trunc: torch.Tensor, context_len: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Pad/truncate like `_preprocess`, for rectangular `[batch_size, time]`. Used for export and batched APIs."""
-        batch_size, input_len = trunc.shape
-        pad_len = context_len - input_len
-        ts_padded = F.pad(trunc, (pad_len, 0), value=0.0)
-        input_padding = torch.cat(
-            [
-                torch.ones(batch_size, pad_len, dtype=trunc.dtype, device=trunc.device),
-                torch.zeros(batch_size, input_len + self.horizon_len, dtype=trunc.dtype, device=trunc.device),
-            ],
-            dim=1,
-        )
-        return ts_padded, input_padding
-
     def _decode_and_project(
         self,
         normalized_ts: torch.Tensor,
@@ -597,10 +583,7 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         if force_flip_invariance is None:
             force_flip_invariance = self.config.force_flip_invariance
 
-        if isinstance(inputs, torch.Tensor):
-            input_ts, input_padding = self._preprocess_stacked(inputs, forecast_context_len)
-        else:
-            input_ts, input_padding = self._preprocess(inputs, context_len=forecast_context_len)
+        input_ts, input_padding = self._preprocess(inputs, context_len=forecast_context_len)
         input_ts = input_ts.to(device)
         input_padding = input_padding.to(device)
 
