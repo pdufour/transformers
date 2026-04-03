@@ -590,12 +590,15 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         self.post_init()
 
     def _preprocess(
-        self, inputs: Sequence[torch.Tensor], freq: Sequence[int] | None = None, context_len: int | None = None
+        self,
+        inputs: Sequence[torch.Tensor] | torch.Tensor,
+        freq: Sequence[int] | None = None,
+        context_len: int | None = None,
     ) -> tuple[torch.Tensor, ...]:
         """Pad/truncate input time series to `context_len` and build a padding mask.
 
         Args:
-            inputs: A list of 1d Tensors. Each Tensor is the context time series of a single forecast task.
+            inputs: A list of 1d Tensors or a single 2d Tensor [batch, time].
             freq: Optional list of frequencies (returned as a tensor when provided).
             context_len: Optional context length override (defaults to `self.context_len`).
 
@@ -608,10 +611,13 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         input_ts, input_padding = [], []
 
         for ts in inputs:
+            # Truncate if longer than context_len
             ts_truncated = ts[-context_len:]
             input_len = ts_truncated.shape[0]
             pad_len = context_len - input_len
+            # F.pad is ONNX-friendly and avoids data-dependent guards
             ts_padded = F.pad(ts_truncated, (pad_len, 0), value=0.0)
+            # Padding is at the front; horizon_len zeros denote valid (non-padded) horizon slots
             mask_padded = torch.cat(
                 [
                     torch.ones(pad_len, dtype=ts.dtype, device=ts.device),
@@ -625,7 +631,8 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
 
         result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
-            result = result + (torch.tensor(freq[: len(inputs)], dtype=torch.int32).reshape(-1, 1),)
+            freq = torch.as_tensor(freq, dtype=torch.int32, device=result[0].device)
+            result = result + (freq[: result[0].shape[0]].reshape(-1, 1),)
         return result
 
     def _postprocess_output(
@@ -655,7 +662,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor],
+        past_values: Sequence[torch.Tensor] | torch.Tensor,
         freq: Sequence[torch.Tensor | int] | None = None,
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,

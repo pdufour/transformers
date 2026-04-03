@@ -547,12 +547,15 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         self.post_init()
 
     def _preprocess(
-        self, inputs: Sequence[torch.Tensor], freq: Sequence[int] | None = None, context_len: int | None = None
+        self,
+        inputs: Sequence[torch.Tensor] | torch.Tensor,
+        freq: Sequence[int] | None = None,
+        context_len: int | None = None,
     ) -> tuple[torch.Tensor, ...]:
         """Pad/truncate input time series to `context_len` and build a padding mask.
 
         Args:
-            inputs: A list of 1d Tensors. Each Tensor is the context time series of a single forecast task.
+            inputs: A list of 1d Tensors or a single 2d Tensor [batch, time].
             freq: Optional list of frequencies (returned as a tensor when provided).
             context_len: Optional context length override (defaults to `self.context_len`).
 
@@ -585,7 +588,8 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
 
         result = (torch.stack(input_ts, dim=0), torch.stack(input_padding, dim=0))
         if freq is not None:
-            result = result + (torch.tensor(freq[: len(inputs)], dtype=torch.int32).reshape(-1, 1),)
+            freq = torch.as_tensor(freq, dtype=torch.int32, device=result[0].device)
+            result = result + (freq[: result[0].shape[0]].reshape(-1, 1),)
         return result
 
     def _postprocess_output(
@@ -615,7 +619,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        past_values: Sequence[torch.Tensor],
+        past_values: Sequence[torch.Tensor] | torch.Tensor,
         freq: Sequence[torch.Tensor | int] | None = None,
         window_size: int | None = None,
         future_values: torch.Tensor | None = None,
@@ -687,6 +691,7 @@ class TimesFmModelForPrediction(TimesFmPreTrainedModel):
         input_ts = input_ts.to(device)
         input_padding = input_padding.to(device)
         inp_freq = inp_freq.to(device)
+
 
         final_out = input_ts
         context_len = final_out.shape[1]

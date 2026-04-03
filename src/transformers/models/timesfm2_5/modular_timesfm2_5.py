@@ -504,11 +504,11 @@ class TimesFm2_5ModelForPrediction(TimesFmModelForPrediction):
         normalized_ts: torch.Tensor,
         input_padding: torch.Tensor,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, TimesFm2_5Output]:
         """Run the decoder and project to point/quantile outputs.
 
         Returns:
-            Tuple of (point_forecast, quantile_spreads), each of shape `(batch, length, num_quantiles)`.
+            Tuple of (point_forecast, quantile_spreads, model_outputs).
         """
         model_outputs = self.model(
             past_values=normalized_ts,
